@@ -58,7 +58,7 @@ jobs:
       command: ${{ steps.parse.outputs.command }}
       requested_at: ${{ steps.parse.outputs.requested_at }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - id: parse
         name: Parse request
         run: python3 scripts/parse_request.py
@@ -82,6 +82,38 @@ jobs:
       matrix:
         run: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
+      - name: Record runner info
+        shell: bash
+        env:
+          RUN_INDEX: ${{ matrix.run }}
+        run: |
+          out="$RUNNER_TEMP/load-test-result"
+          mkdir -p "$out"
+          ipv4='([0-9]{1,3}\.){3}[0-9]{1,3}'
+          list_ips() {
+            if hostname -I >/dev/null 2>&1; then hostname -I
+            elif command -v ip >/dev/null 2>&1; then ip -4 -o addr show scope global | awk '{print $4}'
+            elif command -v ifconfig >/dev/null 2>&1; then ifconfig | awk '/inet /{print $2}'
+            elif command -v powershell >/dev/null 2>&1; then powershell -NoProfile -Command "(Get-NetIPAddress -AddressFamily IPv4).IPAddress"
+            fi
+          }
+          private_ips=$(list_ips 2>/dev/null | tr -s ' \r\t' '\n' | sed 's#/.*##' | grep -Eo "^$ipv4$" | grep -v '^127\.' | sort -u | paste -sd, -) || true
+          public_ip=""
+          for url in https://api.ipify.org https://checkip.amazonaws.com https://ifconfig.me/ip; do
+            public_ip=$(curl -fsS --max-time 5 "$url" 2>/dev/null | tr -d '[:space:]' | grep -Eo "^($ipv4|[0-9A-Fa-f:]+)$") || true
+            [ -n "$public_ip" ] && break
+          done
+          {
+            echo "index=$RUN_INDEX"
+            echo "host=$(hostname)"
+            echo "os=$RUNNER_OS"
+            echo "arch=$RUNNER_ARCH"
+            echo "cpus=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo "$NUMBER_OF_PROCESSORS")"
+            echo "runner_name=$RUNNER_NAME"
+            echo "private_ips=$private_ips"
+            echo "public_ip=$public_ip"
+          } > "$out/meta.txt"
+          cat "$out/meta.txt"
       - name: Run workload
         shell: bash
         env:
@@ -91,15 +123,7 @@ jobs:
           set +e
           out="$RUNNER_TEMP/load-test-result"
           mkdir -p "$out"
-          {
-            echo "index=$RUN_INDEX"
-            echo "host=$(hostname)"
-            echo "os=$RUNNER_OS"
-            echo "arch=$RUNNER_ARCH"
-            echo "cpus=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo "$NUMBER_OF_PROCESSORS")"
-            echo "runner_name=$RUNNER_NAME"
-            echo "started=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          } > "$out/meta.txt"
+          echo "started=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$out/meta.txt"
           if [ -z "$WORKLOAD" ]; then
             WORKLOAD='echo "Run $RUN_INDEX on $RUNNER_NAME ($(hostname), $RUNNER_OS/$RUNNER_ARCH)"; uname -a; sleep 10'
           fi
@@ -111,7 +135,7 @@ jobs:
           exit "$code"
       - name: Upload result
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: result-${{ matrix.run }}
           path: ${{ runner.temp }}/load-test-result
@@ -127,7 +151,7 @@ jobs:
       actions: write
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - id: wait
         name: Wait for every load job to get a runner
         run: python3 scripts/watchdog.py
@@ -137,7 +161,7 @@ jobs:
           QUEUE_TIMEOUT: ${{ needs.plan.outputs.queue_timeout }}
       - name: Upload queue timeout
         if: steps.wait.outputs.timed_out == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: watchdog
           path: watchdog.json
@@ -158,15 +182,15 @@ jobs:
       contents: read
       issues: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Download results
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         continue-on-error: true
         with:
           pattern: result-*
           path: results
       - name: Download queue timeout
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         continue-on-error: true
         with:
           name: watchdog
@@ -182,7 +206,7 @@ jobs:
           WATCHDOG_FILE: watchdog/watchdog.json
       - name: Upload metrics
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: load-test-metrics
           path: |
