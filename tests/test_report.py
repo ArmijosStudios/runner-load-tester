@@ -58,6 +58,7 @@ class ReportTest(unittest.TestCase):
         self.assertEqual(s["max_concurrency"], 2)
         self.assertEqual(s["first_start_after_request_seconds"], 10.0)
         self.assertIsNone(s["all_started_after_request_seconds"])
+        self.assertEqual(s["wall_clock_seconds"], 70.0)
         self.assertEqual(s["queue_seconds"]["max"], 20.0)
         md = report.render(s, self.runs, "self-hosted", "https://run")
         self.assertIn("FAILED: 1/3 runs succeeded on `self-hosted`", md)

@@ -152,7 +152,7 @@ def summarize(runs, expected, requested_at, watchdog):
         "max_concurrency": max_concurrency(runs),
         "first_start_after_request_seconds": round(min(starts) - ts(requested_at), 1) if starts and requested_at else None,
         "all_started_after_request_seconds": round(max(starts) - ts(requested_at), 1) if starts and requested_at and len(starts) == expected else None,
-        "wall_clock_seconds": round(max(ends) - min(created), 1) if ends and created else None,
+        "wall_clock_seconds": round(max(ends) - (ts(requested_at) or min(created)), 1) if ends and created else None,
         "queue_seconds": stats(r["queue_seconds"] for r in runs),
         "setup_seconds": stats(r["setup_seconds"] for r in runs),
         "workload_seconds": stats(r["workload_seconds"] for r in runs),
@@ -219,7 +219,7 @@ def render(summary, runs, runs_on, run_url, include_runs=True):
         f"| Peak concurrent jobs | {summary['max_concurrency']} |",
         f"| First job started (after request) | {fmt(summary['first_start_after_request_seconds'])} |",
         f"| All jobs started (after request) | {fmt(summary['all_started_after_request_seconds'])} |",
-        f"| Total wall clock | {fmt(summary['wall_clock_seconds'])} |",
+        f"| Total wall clock (request to last job done) | {fmt(summary['wall_clock_seconds'])} |",
         "",
         "### Timings",
         "",
@@ -268,7 +268,7 @@ def annotations_fetcher(repo):
         except RuntimeError as e:
             print(f"::warning::Could not read annotations for {job.get('name')}: {e}")
             return []
-        return [a.get("message", "").strip() for a in items if a.get("annotation_level") in ("failure", "warning")]
+        return [a.get("message", "").strip() for a in items if a.get("annotation_level") == "failure"]
     return fetch
 
 
