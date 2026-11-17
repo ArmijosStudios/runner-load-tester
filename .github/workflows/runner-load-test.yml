@@ -13,8 +13,17 @@ on:
         required: true
         type: number
 
+# One test per issue at a time. Events that cannot start a test (other comments, untrusted authors)
+# get their own group so they never replace a pending test.
 concurrency:
-  group: runner-load-test-${{ github.event.issue.number || inputs.issue }}
+  group: >-
+    runner-load-test-${{ github.event.issue.number || inputs.issue }}-${{
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'issues' &&
+         contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association)) ||
+       (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/rerun') &&
+         contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)))
+      && 'test' || github.run_id }}
   cancel-in-progress: false
 
 permissions:
@@ -44,6 +53,7 @@ jobs:
       count: ${{ steps.parse.outputs.count }}
       timeout: ${{ steps.parse.outputs.timeout }}
       queue_timeout: ${{ steps.parse.outputs.queue_timeout }}
+      watchdog_timeout: ${{ steps.parse.outputs.watchdog_timeout }}
       command: ${{ steps.parse.outputs.command }}
       requested_at: ${{ steps.parse.outputs.requested_at }}
     steps:
@@ -55,6 +65,8 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           TRUSTED: ${{ github.event_name == 'workflow_dispatch' }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
           COMMENT_ASSOCIATION: ${{ github.event.comment.author_association }}
           COMMENT_CREATED_AT: ${{ github.event.comment.created_at }}
 
@@ -109,6 +121,7 @@ jobs:
     needs: plan
     if: needs.plan.outputs.queue_timeout != '0'
     runs-on: ${{ vars.CONTROL_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: ${{ fromJSON(needs.plan.outputs.watchdog_timeout) }}
     permissions:
       actions: write
       contents: read

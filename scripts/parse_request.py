@@ -2,8 +2,8 @@
 
 Env: GITHUB_TOKEN, GITHUB_REPOSITORY, ISSUE_NUMBER, RUN_URL,
      COMMENT_ASSOCIATION / COMMENT_CREATED_AT (set when triggered by /rerun),
-     TRUSTED=true (set for workflow_dispatch).
-Outputs: runs_on, matrix, count, timeout, queue_timeout, command, requested_at.
+     TRUSTED=true (set for workflow_dispatch), EVENT_NAME, EVENT_ACTION.
+Outputs: runs_on, matrix, count, timeout, queue_timeout, watchdog_timeout, command, requested_at.
 """
 import json
 import os
@@ -15,6 +15,8 @@ import github
 MAX_RUNS = 256
 TRUSTED_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
 EMPTY = {"", "_no response_", "none"}
+HEADINGS = {"runner label", "concurrent runs", "command", "job timeout (minutes)", "queue timeout (minutes)"}
+MAX_QUEUE_TIMEOUT = 340
 
 
 class RequestError(ValueError):
@@ -26,7 +28,7 @@ def sections(body):
     out, current, lines = {}, None, []
     for line in (body or "").replace("\r\n", "\n").split("\n"):
         m = re.match(r"^###\s+(.+?)\s*$", line)
-        if m:
+        if m and m.group(1).strip().lower() in HEADINGS:
             if current is not None:
                 out[current] = "\n".join(lines).strip()
             current, lines = m.group(1).strip().lower(), []
@@ -72,9 +74,19 @@ def parse(body):
         "labels": labels,
         "count": int_field(fields, "concurrent runs", None, 1, MAX_RUNS),
         "timeout": int_field(fields, "job timeout (minutes)", 30, 1, 360),
-        "queue_timeout": int_field(fields, "queue timeout (minutes)", 60, 0, 1440),
+        "queue_timeout": int_field(fields, "queue timeout (minutes)", 60, 0, MAX_QUEUE_TIMEOUT),
         "command": command,
     }
+
+
+def requested_at(issue):
+    """When this test was asked for: the /rerun comment, the new issue, or else this run's creation."""
+    if os.environ.get("COMMENT_CREATED_AT"):
+        return os.environ["COMMENT_CREATED_AT"]
+    if os.environ.get("EVENT_NAME") == "issues" and os.environ.get("EVENT_ACTION") == "opened":
+        return issue["created_at"]
+    run = github.request("GET", f"/repos/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}")
+    return run["created_at"]
 
 
 def main():
@@ -102,8 +114,9 @@ def main():
     github.write_output("count", req["count"])
     github.write_output("timeout", req["timeout"])
     github.write_output("queue_timeout", req["queue_timeout"])
+    github.write_output("watchdog_timeout", req["queue_timeout"] + 15)
     github.write_output("command", req["command"])
-    github.write_output("requested_at", os.environ.get("COMMENT_CREATED_AT") or issue["created_at"])
+    github.write_output("requested_at", requested_at(issue))
 
     label_text = ", ".join(f"`{l}`" for l in req["labels"])
     queue = f"{req['queue_timeout']} min" if req["queue_timeout"] else "none"

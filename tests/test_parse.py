@@ -42,12 +42,16 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(req["command"], "make test\necho done")
         self.assertEqual((req["timeout"], req["queue_timeout"]), (5, 0))
 
+    def test_heading_inside_command(self):
+        req = parse(body(command="```bash\n### Prepare\necho hi\n```"))
+        self.assertEqual(req["command"], "### Prepare\necho hi")
+
     def test_crlf(self):
         self.assertEqual(parse(body(runs="3").replace("\n", "\r\n"))["count"], 3)
 
     def test_invalid(self):
         for kwargs in [{"label": "_No response_"}, {"runs": "0"}, {"runs": "257"}, {"runs": "ten"},
-                       {"label": "bad label; rm -rf"}, {"timeout": "999"}]:
+                       {"label": "bad label; rm -rf"}, {"timeout": "999"}, {"queue": "341"}]:
             with self.subTest(**kwargs), self.assertRaises(RequestError):
                 parse(body(**kwargs))
 

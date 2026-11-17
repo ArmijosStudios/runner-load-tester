@@ -28,7 +28,7 @@ Min, avg, p50, p95 and max are given for each timing.
 |---|---|---|
 | Command | prints runner info, `sleep 10` | Run with `bash -eo pipefail` on each runner; non-zero exit fails that run. |
 | Job timeout (minutes) | 30 | `timeout-minutes` of each load job (1-360). |
-| Queue timeout (minutes) | 60 | If any job still has no runner after this long (e.g. a mistyped label), the run is cancelled and the report says so. `0` waits indefinitely (GitHub's own limit is 24h). |
+| Queue timeout (minutes) | 60 | Max 340. If any job still has no runner after this long (e.g. a mistyped label), the run is cancelled and the report says so. `0` waits indefinitely (GitHub's own limit is 24h). |
 
 ## Setup
 

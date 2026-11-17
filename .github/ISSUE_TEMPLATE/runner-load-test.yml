@@ -45,7 +45,7 @@ body:
     id: queue_timeout
     attributes:
       label: Queue timeout (minutes)
-      description: Optional. If any job still has no runner after this many minutes, the test is cancelled and reported. Default 60, 0 to wait forever.
+      description: Optional. If any job still has no runner after this many minutes, the test is cancelled and reported. Default 60 (max 340), 0 to wait forever.
       placeholder: "60"
     validations:
       required: false
