@@ -82,6 +82,38 @@ jobs:
       matrix:
         run: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
+      - name: Record runner info
+        shell: bash
+        env:
+          RUN_INDEX: ${{ matrix.run }}
+        run: |
+          out="$RUNNER_TEMP/load-test-result"
+          mkdir -p "$out"
+          ipv4='([0-9]{1,3}\.){3}[0-9]{1,3}'
+          list_ips() {
+            if hostname -I >/dev/null 2>&1; then hostname -I
+            elif command -v ip >/dev/null 2>&1; then ip -4 -o addr show scope global | awk '{print $4}'
+            elif command -v ifconfig >/dev/null 2>&1; then ifconfig | awk '/inet /{print $2}'
+            elif command -v powershell >/dev/null 2>&1; then powershell -NoProfile -Command "(Get-NetIPAddress -AddressFamily IPv4).IPAddress"
+            fi
+          }
+          private_ips=$(list_ips 2>/dev/null | tr -s ' \r\t' '\n' | sed 's#/.*##' | grep -Eo "^$ipv4$" | grep -v '^127\.' | sort -u | paste -sd, -) || true
+          public_ip=""
+          for url in https://api.ipify.org https://checkip.amazonaws.com https://ifconfig.me/ip; do
+            public_ip=$(curl -fsS --max-time 5 "$url" 2>/dev/null | tr -d '[:space:]' | grep -Eo "^($ipv4|[0-9A-Fa-f:]+)$") || true
+            [ -n "$public_ip" ] && break
+          done
+          {
+            echo "index=$RUN_INDEX"
+            echo "host=$(hostname)"
+            echo "os=$RUNNER_OS"
+            echo "arch=$RUNNER_ARCH"
+            echo "cpus=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo "$NUMBER_OF_PROCESSORS")"
+            echo "runner_name=$RUNNER_NAME"
+            echo "private_ips=$private_ips"
+            echo "public_ip=$public_ip"
+          } > "$out/meta.txt"
+          cat "$out/meta.txt"
       - name: Run workload
         shell: bash
         env:
@@ -91,15 +123,7 @@ jobs:
           set +e
           out="$RUNNER_TEMP/load-test-result"
           mkdir -p "$out"
-          {
-            echo "index=$RUN_INDEX"
-            echo "host=$(hostname)"
-            echo "os=$RUNNER_OS"
-            echo "arch=$RUNNER_ARCH"
-            echo "cpus=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo "$NUMBER_OF_PROCESSORS")"
-            echo "runner_name=$RUNNER_NAME"
-            echo "started=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          } > "$out/meta.txt"
+          echo "started=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$out/meta.txt"
           if [ -z "$WORKLOAD" ]; then
             WORKLOAD='echo "Run $RUN_INDEX on $RUNNER_NAME ($(hostname), $RUNNER_OS/$RUNNER_ARCH)"; uname -a; sleep 10'
           fi

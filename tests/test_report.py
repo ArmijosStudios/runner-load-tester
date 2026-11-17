@@ -26,7 +26,7 @@ class ReportTest(unittest.TestCase):
         self.dir = tempfile.mkdtemp()
         os.makedirs(os.path.join(self.dir, "result-2"))
         with open(os.path.join(self.dir, "result-2", "meta.txt"), "w") as f:
-            f.write("host=box2\nexit_code=3\n")
+            f.write("host=box2\nexit_code=3\nprivate_ips=10.0.0.5,172.17.0.1\npublic_ip=203.0.113.7\n")
         with open(os.path.join(self.dir, "result-2", "output.log"), "w") as f:
             f.write("boom\n")
         self.jobs = [
@@ -64,6 +64,11 @@ class ReportTest(unittest.TestCase):
         self.assertIn("FAILED: 1/3 runs succeeded on `self-hosted`", md)
         self.assertIn("Process completed with exit code 3.", md)
         self.assertIn("| [#2](https://x/2) | failure | r2 | box2 |", md)
+        self.assertIn("### IP addresses by run", md)
+        self.assertIn("| [#2](https://x/2) | r2 | 10.0.0.5, 172.17.0.1 | 203.0.113.7 |", md)
+        self.assertIn("| [#1](https://x/1) | r1 | – | – |", md)
+        self.assertEqual(s["distinct_public_ips"], 1)
+        self.assertNotIn("IP addresses by run", report.render(s, self.runs, "x", "u", include_ips=False))
 
     def test_fmt_and_stats(self):
         self.assertEqual(report.fmt(5), "5.0s")

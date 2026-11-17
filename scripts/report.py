@@ -102,6 +102,8 @@ def collect(jobs, results_dir, annotations_for):
             "os": result.get("os"),
             "arch": result.get("arch"),
             "cpus": result.get("cpus"),
+            "private_ips": [ip for ip in (result.get("private_ips") or "").split(",") if ip],
+            "public_ip": result.get("public_ip") or None,
             "exit_code": result.get("exit_code"),
             "errors": list(dict.fromkeys(errors)),
             "output_tail": result.get("output_tail") if job.get("conclusion") != "success" else None,
@@ -149,6 +151,7 @@ def summarize(runs, expected, requested_at, watchdog):
         "conclusions": dict(by),
         "success_rate": round(100 * succeeded / expected, 1) if expected else 0,
         "distinct_runners": len({r["runner_name"] for r in runs if r["runner_name"]}),
+        "distinct_public_ips": len({r["public_ip"] for r in runs if r["public_ip"]}),
         "max_concurrency": max_concurrency(runs),
         "first_start_after_request_seconds": round(min(starts) - ts(requested_at), 1) if starts and requested_at else None,
         "all_started_after_request_seconds": round(max(starts) - ts(requested_at), 1) if starts and requested_at and len(starts) == expected else None,
@@ -191,7 +194,7 @@ def cell(text):
     return str(text).replace("|", "\\|").replace("\n", " ")
 
 
-def render(summary, runs, runs_on, run_url, include_runs=True):
+def render(summary, runs, runs_on, run_url, include_runs=True, include_ips=True):
     passed = summary["succeeded"] == summary["expected"]
     label = ", ".join(f"`{l}`" for l in (runs_on if isinstance(runs_on, list) else [runs_on]))
     verdict = "PASSED" if passed else "FAILED"
@@ -216,6 +219,7 @@ def render(summary, runs, runs_on, run_url, include_runs=True):
         f"| Never got a runner | {summary['never_started']} |",
         f"| Success rate | {summary['success_rate']}% |",
         f"| Distinct runners used | {summary['distinct_runners']} |",
+        f"| Distinct public IPs | {summary['distinct_public_ips']} |",
         f"| Peak concurrent jobs | {summary['max_concurrency']} |",
         f"| First job started (after request) | {fmt(summary['first_start_after_request_seconds'])} |",
         f"| All jobs started (after request) | {fmt(summary['all_started_after_request_seconds'])} |",
@@ -245,6 +249,17 @@ def render(summary, runs, runs_on, run_url, include_runs=True):
         if tail:
             out += [f"<details><summary>Output of failed run #{tail['index']} (last lines)</summary>", "",
                     "```", tail["output_tail"][-1500:].replace("```", "'''"), "```", "</details>", ""]
+    if include_ips:
+        collapse = len(runs) > 20
+        if collapse:
+            out += ["<details><summary>IP addresses by run</summary>", ""]
+        else:
+            out += ["### IP addresses by run", ""]
+        out += ["| Run | Runner | Private IPs | Public IP |", "|---|---|---|---|"]
+        for r in runs:
+            out.append(f"| [#{r['index']}]({r['url']}) | {cell(r['runner_name'] or '–')} "
+                       f"| {cell(', '.join(r['private_ips']) or '–')} | {cell(r['public_ip'] or '–')} |")
+        out += ["", "</details>", ""] if collapse else [""]
     if include_runs:
         out += ["<details><summary>Per-run details</summary>", "",
                 "| Run | Result | Runner | Host | Queued | Setup | Workload | Total |",
@@ -256,8 +271,9 @@ def render(summary, runs, runs_on, run_url, include_runs=True):
                 f"| {fmt(r['queue_seconds'])} | {fmt(r['setup_seconds'])} | {fmt(r['workload_seconds'])} | {fmt(r['duration_seconds'])} |"
             )
         out += ["", "</details>", ""]
-    else:
-        out += ["Per-run details are in the `load-test-metrics` artifact of the workflow run.", ""]
+    if not (include_runs and include_ips):
+        out += ["Some per-run tables were left out to fit GitHub's comment limit; all of it is in the "
+                "`load-test-metrics` artifact of the workflow run.", ""]
     return "\n".join(out)
 
 
@@ -300,9 +316,10 @@ def main():
     with open("metrics.json", "w") as f:
         json.dump({"run_url": run_url, "runs_on": runs_on, "summary": summary, "runs": runs}, f, indent=2)
 
-    body = render(summary, runs, runs_on, run_url)
-    if len(body) > MAX_COMMENT:
-        body = render(summary, runs, runs_on, run_url, include_runs=False)
+    for include_runs, include_ips in ((True, True), (False, True), (False, False)):
+        body = render(summary, runs, runs_on, run_url, include_runs=include_runs, include_ips=include_ips)
+        if len(body) <= MAX_COMMENT:
+            break
     with open("report.md", "w") as f:
         f.write(body)
     if os.environ.get("GITHUB_STEP_SUMMARY"):
