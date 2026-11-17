@@ -16,9 +16,9 @@ Comment `/rerun` on the issue to run it again with the issue's current values (e
 | Startup: time queued until a runner picked the job up | job `created_at` → `started_at` |
 | Startup: runner job setup | `Set up job` step duration |
 | Workload time, job total | `Run workload` step, job `started_at` → `completed_at` |
-| First / all jobs started after the request, total wall clock, peak concurrency | job timestamps vs. issue (or `/rerun` comment) time |
+| First / all jobs started after the request, wall clock (request to last job done), peak concurrency | job timestamps vs. the request (new issue, `/rerun` comment, or run start for dispatch/reopen) |
 | Distinct runners, per-run runner, host, OS/arch | job `runner_name`, values the job records |
-| Errors grouped by message, with the runs they hit | failure/warning annotations, failed steps, workload exit code, last output lines |
+| Errors grouped by message, with the runs they hit | failure annotations, failed steps, workload exit code, last output lines |
 
 Min, avg, p50, p95 and max are given for each timing.
 
