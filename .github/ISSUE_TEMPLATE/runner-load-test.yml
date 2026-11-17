@@ -1,0 +1,51 @@
+name: Runner load test
+description: Run N concurrent jobs on a runner label and get a metrics report on this issue.
+title: "Load test: "
+labels: [runner-load-test]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Submitting this issue starts **N** concurrent jobs on the runner label below.
+        When they all finish, a report (success/failure, queue/startup time, durations, errors) is posted here.
+        Comment `/rerun` to run it again with the issue's current values.
+  - type: input
+    id: runner_label
+    attributes:
+      label: Runner label
+      description: The `runs-on` label. Separate several labels with commas to require all of them (e.g. `self-hosted, linux, x64`).
+      placeholder: self-hosted
+    validations:
+      required: true
+  - type: input
+    id: runs
+    attributes:
+      label: Concurrent runs
+      description: How many jobs to start at the same time (1-256).
+      placeholder: "10"
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command
+      description: Optional bash run by every job. Leave empty for the default smoke workload (prints runner info and sleeps 10s).
+      render: bash
+    validations:
+      required: false
+  - type: input
+    id: timeout
+    attributes:
+      label: Job timeout (minutes)
+      description: Optional. Each job is stopped after this many minutes of running. Default 30.
+      placeholder: "30"
+    validations:
+      required: false
+  - type: input
+    id: queue_timeout
+    attributes:
+      label: Queue timeout (minutes)
+      description: Optional. If any job still has no runner after this many minutes, the test is cancelled and reported. Default 60, 0 to wait forever.
+      placeholder: "60"
+    validations:
+      required: false

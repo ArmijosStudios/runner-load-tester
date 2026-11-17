@@ -1,0 +1,177 @@
+name: Runner load test
+run-name: "Runner load test for issue #${{ github.event.issue.number || inputs.issue }}"
+
+on:
+  issues:
+    types: [opened, reopened]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: Number of the load-test issue to run (and report to)
+        required: true
+        type: number
+
+concurrency:
+  group: runner-load-test-${{ github.event.issue.number || inputs.issue }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue }}
+
+jobs:
+  plan:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issues' &&
+        (contains(github.event.issue.labels.*.name, 'runner-load-test') ||
+         startsWith(github.event.issue.body, '### Runner label'))) ||
+      (github.event_name == 'issue_comment' && !github.event.issue.pull_request &&
+        startsWith(github.event.comment.body, '/rerun') &&
+        (contains(github.event.issue.labels.*.name, 'runner-load-test') ||
+         startsWith(github.event.issue.body, '### Runner label')))
+    runs-on: ${{ vars.CONTROL_RUNNER || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+      issues: write
+    outputs:
+      runs_on: ${{ steps.parse.outputs.runs_on }}
+      matrix: ${{ steps.parse.outputs.matrix }}
+      count: ${{ steps.parse.outputs.count }}
+      timeout: ${{ steps.parse.outputs.timeout }}
+      queue_timeout: ${{ steps.parse.outputs.queue_timeout }}
+      command: ${{ steps.parse.outputs.command }}
+      requested_at: ${{ steps.parse.outputs.requested_at }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: parse
+        name: Parse request
+        run: python3 scripts/parse_request.py
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TRUSTED: ${{ github.event_name == 'workflow_dispatch' }}
+          COMMENT_ASSOCIATION: ${{ github.event.comment.author_association }}
+          COMMENT_CREATED_AT: ${{ github.event.comment.created_at }}
+
+  load:
+    needs: plan
+    name: "load #${{ matrix.run }}"
+    runs-on: ${{ fromJSON(needs.plan.outputs.runs_on) }}
+    timeout-minutes: ${{ fromJSON(needs.plan.outputs.timeout) }}
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ fromJSON(needs.plan.outputs.count) }}
+      matrix:
+        run: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - name: Run workload
+        shell: bash
+        env:
+          RUN_INDEX: ${{ matrix.run }}
+          WORKLOAD: ${{ needs.plan.outputs.command }}
+        run: |
+          set +e
+          out="$RUNNER_TEMP/load-test-result"
+          mkdir -p "$out"
+          {
+            echo "index=$RUN_INDEX"
+            echo "host=$(hostname)"
+            echo "os=$RUNNER_OS"
+            echo "arch=$RUNNER_ARCH"
+            echo "cpus=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo "$NUMBER_OF_PROCESSORS")"
+            echo "runner_name=$RUNNER_NAME"
+            echo "started=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } > "$out/meta.txt"
+          if [ -z "$WORKLOAD" ]; then
+            WORKLOAD='echo "Run $RUN_INDEX on $RUNNER_NAME ($(hostname), $RUNNER_OS/$RUNNER_ARCH)"; uname -a; sleep 10'
+          fi
+          bash -eo pipefail -c "$WORKLOAD" 2>&1 | tee "$out/output.log"
+          code=${PIPESTATUS[0]}
+          echo "exit_code=$code" >> "$out/meta.txt"
+          echo "finished=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$out/meta.txt"
+          if [ "$code" != 0 ]; then echo "::error::Workload exited with code $code"; fi
+          exit "$code"
+      - name: Upload result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: result-${{ matrix.run }}
+          path: ${{ runner.temp }}/load-test-result
+          retention-days: 7
+          if-no-files-found: ignore
+
+  watchdog:
+    needs: plan
+    if: needs.plan.outputs.queue_timeout != '0'
+    runs-on: ${{ vars.CONTROL_RUNNER || 'ubuntu-latest' }}
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - id: wait
+        name: Wait for every load job to get a runner
+        run: python3 scripts/watchdog.py
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          EXPECTED: ${{ needs.plan.outputs.count }}
+          QUEUE_TIMEOUT: ${{ needs.plan.outputs.queue_timeout }}
+      - name: Upload queue timeout
+        if: steps.wait.outputs.timed_out == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: watchdog
+          path: watchdog.json
+          retention-days: 7
+      - name: Cancel run
+        if: steps.wait.outputs.timed_out == 'true'
+        run: python3 scripts/watchdog.py --cancel
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+  report:
+    needs: [plan, load, watchdog]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ${{ vars.CONTROL_RUNNER || 'ubuntu-latest' }}
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download results
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: result-*
+          path: results
+      - name: Download queue timeout
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: watchdog
+          path: watchdog
+      - name: Collect metrics and post report
+        run: python3 scripts/report.py
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          EXPECTED: ${{ needs.plan.outputs.count }}
+          RUNS_ON: ${{ needs.plan.outputs.runs_on }}
+          REQUESTED_AT: ${{ needs.plan.outputs.requested_at }}
+          RESULTS_DIR: results
+          WATCHDOG_FILE: watchdog/watchdog.json
+      - name: Upload metrics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-test-metrics
+          path: |
+            metrics.json
+            report.md
+          if-no-files-found: ignore
