@@ -82,6 +82,7 @@ jobs:
       matrix:
         run: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
+      - uses: actions/checkout@v6
       - name: Record runner info
         shell: bash
         env:
